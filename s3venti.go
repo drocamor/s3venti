@@ -87,7 +87,7 @@ func (srv *Vts3) getBlock(score vt.Score) *Block {
 	var b *Block
 
 	blockPath := fmt.Sprintf("%s", score)
-	fmt.Println("getBlock blockPath: ", blockPath)
+	fmt.Println("get blockPath: ", blockPath)
 	
 
 	blockData, err := srv.bucket.Get(blockPath)
@@ -114,17 +114,26 @@ func (srv *Vts3) putBlock(btype uint8, data []byte) *Block {
 
 	score := srv.calcScore(data)
 
-
-	b = srv.getBlock(score)
+	b = new(Block)
 
 	// Does the block already exist?
+	blockPath := fmt.Sprintf("%s", score)
+	fmt.Println("put blockPath: ", blockPath)
 
+	exists, err := srv.bucket.Exists(blockPath)
+	if err != nil {
+		fmt.Println("I found an error", err)
+		//panic(err.Error())
+	}
 	
-	if b == nil {
-		blockPath := fmt.Sprintf("%s", score)
-		fmt.Println("putBlock blockPath: ", blockPath)
+	if exists == true {
+		b.Score = score
+		fmt.Println("Exists!")
+	} else {
+		fmt.Println("Does not exist!")
 	
-		b = new(Block)
+	
+	
 		b.Score = score
 		b.Btype = btype
 		b.Data = data
@@ -133,10 +142,10 @@ func (srv *Vts3) putBlock(btype uint8, data []byte) *Block {
 		m := new(bytes.Buffer)
 		enc := gob.NewEncoder(m)
 		enc.Encode(b)
-		fmt.Println("Data:", m.Bytes())
-		err := srv.bucket.PutReader(blockPath, m, int64(m.Len()), "binary/octet-stream", s3.BucketOwnerFull, s3.Options{})
+		err = srv.bucket.PutReader(blockPath, m, int64(m.Len()), "binary/octet-stream", s3.BucketOwnerFull, s3.Options{})
 		if err != nil {
-                panic(err.Error())
+            fmt.Println("put error", err)
+			//panic(err)
         }
 	}
 
@@ -148,7 +157,6 @@ func (srv *Vts3) Hello(req *vtsrv.Req) {
 }
 
 func (srv *Vts3) Read(req *vtsrv.Req) {
-	fmt.Println("In Read")
 	b := srv.getBlock(req.Tc.Score)
 	if b == nil {
 		req.RespondError("not found")
@@ -163,7 +171,6 @@ func (srv *Vts3) Read(req *vtsrv.Req) {
 }
 
 func (srv *Vts3) Write(req *vtsrv.Req) {
-	fmt.Println("In Write")
 	b := srv.putBlock(req.Tc.Btype, req.Tc.Data)
 	req.RespondWrite(b.Score)
 }
