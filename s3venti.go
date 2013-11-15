@@ -15,13 +15,10 @@ import (
 	"hash"
 	"launchpad.net/goamz/aws"
 	"launchpad.net/goamz/s3"
-	"sync"
-
 )
 
 type Vts3 struct {
 	vtsrv.Srv
-	sync.Mutex
 	htbl   map[int]*Block
 	schan  chan hash.Hash
 	bucket *s3.Bucket
