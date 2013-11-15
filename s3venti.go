@@ -86,8 +86,7 @@ func eqscore(s1, s2 vt.Score) bool {
 func (srv *Vts3) getBlock(score vt.Score) *Block {
 	var b *Block
 
-	h := calcHash(score)
-	blockPath := fmt.Sprintf("%d", h)
+	blockPath := fmt.Sprintf("%s", score)
 	fmt.Println("getBlock blockPath: ", blockPath)
 	
 
@@ -115,14 +114,14 @@ func (srv *Vts3) putBlock(btype uint8, data []byte) *Block {
 
 	score := srv.calcScore(data)
 
+
 	b = srv.getBlock(score)
 
 	// Does the block already exist?
 
 	
 	if b == nil {
-		h := calcHash(score)
-		blockPath := fmt.Sprintf("%d", h)
+		blockPath := fmt.Sprintf("%s", score)
 		fmt.Println("putBlock blockPath: ", blockPath)
 	
 		b = new(Block)
