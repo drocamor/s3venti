@@ -13,8 +13,8 @@ import (
 	"fmt"
 	"flag"
 	"hash"
-	"launchpad.net/goamz/aws"
-	"launchpad.net/goamz/s3"
+	"github.com/crowdmob/goamz/aws"
+	"github.com/crowdmob/goamz/s3"
 )
 
 type Vts3 struct {
@@ -135,7 +135,7 @@ func (srv *Vts3) putBlock(btype uint8, data []byte) *Block {
 		enc := gob.NewEncoder(m)
 		enc.Encode(b)
 		fmt.Println("Data:", m.Bytes())
-		err := srv.bucket.PutReader(blockPath, m, int64(m.Len()), "binary/octet-stream", s3.BucketOwnerFull)
+		err := srv.bucket.PutReader(blockPath, m, int64(m.Len()), "binary/octet-stream", s3.BucketOwnerFull, s3.Options{})
 		if err != nil {
                 panic(err.Error())
         }
