@@ -9,17 +9,16 @@ import (
 	"code.google.com/p/govt/vt"
 	"code.google.com/p/govt/vt/vtsrv"
 	"crypto/sha1"
-    "encoding/gob"
-	"fmt"
+	"encoding/gob"
 	"flag"
-	"hash"
+	"fmt"
 	"github.com/crowdmob/goamz/aws"
 	"github.com/crowdmob/goamz/s3"
+	"hash"
 )
 
 type Vts3 struct {
 	vtsrv.Srv
-	htbl   map[int]*Block
 	schan  chan hash.Hash
 	bucket *s3.Bucket
 }
@@ -28,7 +27,6 @@ type Block struct {
 	Btype uint8
 	Score vt.Score
 	Data  []byte
-	Next  *Block
 }
 
 var addr = flag.String("addr", ":17034", "network address")
@@ -36,7 +34,6 @@ var debug = flag.Int("debug", 0, "print debug messages")
 var bucketName = flag.String("bucket", "daves-venti", "s3 bucket")
 
 func (srv *Vts3) init() {
-	srv.htbl = make(map[int]*Block)
 	srv.schan = make(chan hash.Hash, 32)
 
 	auth, err := aws.EnvAuth()
@@ -47,10 +44,6 @@ func (srv *Vts3) init() {
 	s := s3.New(auth, aws.USEast)
 	srv.bucket = s.Bucket(*bucketName)
 
-}
-
-func calcHash(score vt.Score) int {
-	return int(score[0]<<24) | int(score[1]<<16) | int(score[2]<<8) | int(score[3])
 }
 
 func (srv *Vts3) calcScore(data []byte) (ret vt.Score) {
@@ -73,39 +66,27 @@ func (srv *Vts3) calcScore(data []byte) (ret vt.Score) {
 	return
 }
 
-func eqscore(s1, s2 vt.Score) bool {
-	for i := 0; i < vt.Scoresize; i++ {
-		if s1[i] != s2[i] {
-			return false
-		}
-	}
-
-	return true
-}
-
 func (srv *Vts3) getBlock(score vt.Score) *Block {
 	var b *Block
 
 	blockPath := fmt.Sprintf("%s", score)
-	fmt.Println("get blockPath: ", blockPath)
-	
 
 	blockData, err := srv.bucket.Get(blockPath)
 	if err != nil {
-        fmt.Printf("s3 error:%s\n", err)
+		fmt.Printf("s3 error:%s\n", err)
 		return b
-    }
-	
+	}
+
 	p := bytes.NewBuffer(blockData)
 
 	dec := gob.NewDecoder(p)
 
 	err = dec.Decode(&b)
-    if err != nil {
-        fmt.Printf("decode error:%s\n", err)
+	if err != nil {
+		fmt.Printf("decode error:%s\n", err)
 		return nil
-    }
-	
+	}
+
 	return b
 }
 
@@ -118,22 +99,17 @@ func (srv *Vts3) putBlock(btype uint8, data []byte) *Block {
 
 	// Does the block already exist?
 	blockPath := fmt.Sprintf("%s", score)
-	fmt.Println("put blockPath: ", blockPath)
 
 	exists, err := srv.bucket.Exists(blockPath)
 	if err != nil {
-		fmt.Println("I found an error", err)
-		//panic(err.Error())
+		panic(err.Error())
 	}
-	
+
 	if exists == true {
+		fmt.Println("Exists:", blockPath)
 		b.Score = score
-		fmt.Println("Exists!")
 	} else {
-		fmt.Println("Does not exist!")
-	
-	
-	
+		fmt.Println("Missing:", blockPath)
 		b.Score = score
 		b.Btype = btype
 		b.Data = data
@@ -144,9 +120,8 @@ func (srv *Vts3) putBlock(btype uint8, data []byte) *Block {
 		enc.Encode(b)
 		err = srv.bucket.PutReader(blockPath, m, int64(m.Len()), "binary/octet-stream", s3.BucketOwnerFull, s3.Options{})
 		if err != nil {
-            fmt.Println("put error", err)
-			//panic(err)
-        }
+			panic(err)
+		}
 	}
 
 	return b
