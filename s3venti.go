@@ -10,17 +10,17 @@ import (
 	"encoding/gob"
 	"flag"
 	"fmt"
+	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/crowdmob/goamz/aws"
 	"github.com/crowdmob/goamz/s3"
 	"hash"
-	"github.com/bradfitz/gomemcache/memcache"
 )
 
 type Vts3 struct {
 	vtsrv.Srv
 	schan  chan hash.Hash
 	bucket *s3.Bucket
-	mc *memcache.Client
+	mc     *memcache.Client
 }
 
 type Block struct {
@@ -45,7 +45,7 @@ func (srv *Vts3) init() {
 
 	s := s3.New(auth, aws.USEast)
 	srv.bucket = s.Bucket(*bucketName)
-	
+
 	srv.mc = memcache.New(*memcacheServer)
 
 	if *fillCache == true {
@@ -68,11 +68,11 @@ func (srv *Vts3) init() {
 		}
 		fmt.Println("Filling Cache...")
 		for _, key := range allKeys {
-			
+
 			srv.mc.Set(&memcache.Item{Key: fmt.Sprintf("exists-%s", key), Value: []byte(nil)})
 		}
 		fmt.Println("Done.")
-		
+
 	}
 
 }
@@ -101,11 +101,11 @@ func (srv *Vts3) getBlock(score vt.Score) *Block {
 	var b *Block
 
 	blockPath := fmt.Sprintf("%s", score)
-	
+
 	var blockData []byte
-	
+
 	cachedBlock, err := srv.mc.Get(blockPath)
-	
+
 	if err == nil {
 		fmt.Println("Block cached", blockPath)
 		blockData = cachedBlock.Value
@@ -141,25 +141,23 @@ func (srv *Vts3) putBlock(btype uint8, data []byte) *Block {
 
 	// Does the block already exist?
 	blockPath := fmt.Sprintf("%s", score)
-	
+
 	existsCacheKey := fmt.Sprintf("exists-%s", score)
-	
-	
+
 	// if there is no error, it's in the cache
 	_, cacheErr := srv.mc.Get(existsCacheKey)
-	
+
 	if cacheErr == nil {
 		fmt.Println("Cached:", blockPath)
 		b.Score = score
 		return b
 	}
-	
-	
+
 	exists, err := srv.bucket.Exists(blockPath)
 	if err != nil {
 		panic(err.Error())
 	}
-	
+
 	if exists == true {
 		fmt.Println("Exists:", blockPath)
 		b.Score = score
@@ -173,7 +171,7 @@ func (srv *Vts3) putBlock(btype uint8, data []byte) *Block {
 		m := new(bytes.Buffer)
 		enc := gob.NewEncoder(m)
 		enc.Encode(b)
-		
+
 		blockData := m.Bytes()
 		err = srv.bucket.Put(blockPath, blockData, "binary/octet-stream", s3.BucketOwnerFull, s3.Options{})
 		if err != nil {
