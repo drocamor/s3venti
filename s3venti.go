@@ -14,6 +14,7 @@ import (
 	"github.com/crowdmob/goamz/aws"
 	"github.com/crowdmob/goamz/s3"
 	"hash"
+	"log"
 )
 
 type Vts3 struct {
@@ -21,6 +22,7 @@ type Vts3 struct {
 	schan  chan hash.Hash
 	bucket *s3.Bucket
 	mc     *memcache.Client
+	debug  int
 }
 
 type Block struct {
@@ -107,13 +109,13 @@ func (srv *Vts3) getBlock(score vt.Score) *Block {
 	cachedBlock, err := srv.mc.Get(blockPath)
 
 	if err == nil {
-		fmt.Println("Block cached", blockPath)
+		srv.log("getBlock: block cached -", blockPath)
 		blockData = cachedBlock.Value
 	} else {
-		fmt.Println("Block not cached", blockPath)
+		srv.log("getBlock: block not cached", blockPath)
 		blockData, err = srv.bucket.Get(blockPath)
 		if err != nil {
-			fmt.Printf("s3 error:%s\n", err)
+			srv.log("getBlock: s3 error:%s\n", err)
 			return b
 		}
 		srv.mc.Set(&memcache.Item{Key: blockPath, Value: blockData})
@@ -125,7 +127,7 @@ func (srv *Vts3) getBlock(score vt.Score) *Block {
 
 	err = dec.Decode(&b)
 	if err != nil {
-		fmt.Printf("decode error:%s\n", err)
+		srv.log("getBlock: decode error:%s\n", err)
 		return nil
 	}
 
@@ -148,7 +150,7 @@ func (srv *Vts3) putBlock(btype uint8, data []byte) *Block {
 	_, cacheErr := srv.mc.Get(existsCacheKey)
 
 	if cacheErr == nil {
-		fmt.Println("Cached:", blockPath)
+		srv.log("putBlock: block cached -", blockPath)
 		b.Score = score
 		return b
 	}
@@ -159,10 +161,10 @@ func (srv *Vts3) putBlock(btype uint8, data []byte) *Block {
 	}
 
 	if exists == true {
-		fmt.Println("Exists:", blockPath)
+		srv.log("putBlock: block exists -", blockPath)
 		b.Score = score
 	} else {
-		fmt.Println("Missing:", blockPath)
+		srv.log("putBlock: block missing -", blockPath)
 		b.Score = score
 		b.Btype = btype
 		b.Data = data
@@ -206,11 +208,17 @@ func (srv *Vts3) Write(req *vtsrv.Req) {
 	req.RespondWrite(b.Score)
 }
 
+func (srv *Vts3) log(m ...interface{}) {
+	if srv.debug > 0 {
+		log.Println(m)
+	}
+}
+
 func main() {
 	flag.Parse()
 	srv := new(Vts3)
 	srv.init()
-	srv.Debuglevel = *debug
+	srv.debug = *debug
 	srv.Start(srv)
 	srv.StartStatsServer()
 	vtsrv.StartListener("tcp", *addr, &srv.Srv)
