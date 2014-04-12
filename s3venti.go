@@ -3,24 +3,27 @@
 package main
 
 import (
-	"bytes"
+	//"bytes"
 	"code.google.com/p/govt/vt"
 	"code.google.com/p/govt/vt/vtsrv"
 	"crypto/sha1"
-	"encoding/gob"
+	// "encoding/gob"
 	"flag"
 	"fmt"
 	"github.com/crowdmob/goamz/aws"
 	"github.com/crowdmob/goamz/s3"
 	"hash"
 	"log"
+	"time"
 )
 
 type Vts3 struct {
 	vtsrv.Srv
-	schan  chan hash.Hash
-	bucket *s3.Bucket
-	debug  int
+	schan        chan hash.Hash
+	bucket       *s3.Bucket
+	debug        int
+	putter       chan *Block
+	currentChunk Chunk
 }
 
 type Block struct {
@@ -29,9 +32,37 @@ type Block struct {
 	Data  []byte
 }
 
+type Chunk struct {
+	Blocks map[string]*Block
+	Id     string
+}
+
 var addr = flag.String("addr", ":17034", "network address")
 var debug = flag.Int("debug", 0, "print debug messages")
 var bucketName = flag.String("bucket", "daves-venti", "s3 bucket")
+
+func (c *Chunk) init() {
+	c.Blocks = make(map[string]*Block)
+	c.Id = "foo"
+}
+
+// createBlockPutter makes a goroutine that recieves blocks and stores them in chunks
+func (srv *Vts3) createBlockPutter() {
+	srv.putter = make(chan *Block)
+	go func() {
+		for {
+			select {
+			case b := <-srv.putter:
+				score := fmt.Sprintf("%s", b.Score)
+				srv.log("putter: storing", score, "in chunk", srv.currentChunk.Id)
+				srv.currentChunk.Blocks[score] = b
+			case <-time.After(10 * time.Second):
+				srv.log("Should rotate chunk now")
+			}
+		}
+	}()
+
+}
 
 func (srv *Vts3) init() {
 	srv.schan = make(chan hash.Hash, 32)
@@ -43,6 +74,8 @@ func (srv *Vts3) init() {
 
 	s := s3.New(auth, aws.USEast)
 	srv.bucket = s.Bucket(*bucketName)
+	srv.currentChunk.init()
+	srv.createBlockPutter()
 
 }
 
@@ -67,29 +100,10 @@ func (srv *Vts3) calcScore(data []byte) (ret vt.Score) {
 }
 
 func (srv *Vts3) getBlock(score vt.Score) *Block {
-	var b *Block
 
 	blockPath := fmt.Sprintf("%s", score)
 
-	var blockData []byte
-
-	blockData, err := srv.bucket.Get(blockPath)
-	if err != nil {
-		srv.log("getBlock: s3 error:%s\n", err)
-		return b
-	}
-
-	p := bytes.NewBuffer(blockData)
-
-	dec := gob.NewDecoder(p)
-
-	err = dec.Decode(&b)
-	if err != nil {
-		srv.log("getBlock: decode error:%s\n", err)
-		return nil
-	}
-
-	return b
+	return srv.currentChunk.Blocks[blockPath]
 }
 
 func (srv *Vts3) putBlock(btype uint8, data []byte) *Block {
@@ -98,36 +112,22 @@ func (srv *Vts3) putBlock(btype uint8, data []byte) *Block {
 	score := srv.calcScore(data)
 
 	b = new(Block)
+	b.Score = score
 
 	// Does the block already exist?
 	blockPath := fmt.Sprintf("%s", score)
 
-	exists, err := srv.bucket.Exists(blockPath)
-	if err != nil {
-		panic(err.Error())
-	}
-
-	if exists == true {
+	if _, ok := srv.currentChunk.Blocks[blockPath]; ok {
 		srv.log("putBlock: block exists -", blockPath)
-		b.Score = score
-	} else {
-		srv.log("putBlock: block missing -", blockPath)
-		b.Score = score
-		b.Btype = btype
-		b.Data = data
-		//b.next = b
 
-		m := new(bytes.Buffer)
-		enc := gob.NewEncoder(m)
-		enc.Encode(b)
-
-		blockData := m.Bytes()
-		err = srv.bucket.Put(blockPath, blockData, "binary/octet-stream", s3.BucketOwnerFull, s3.Options{})
-		if err != nil {
-			panic(err)
-		}
-
+		return b
 	}
+
+	srv.log("putBlock: block missing -", blockPath)
+	b.Btype = btype
+	b.Data = data
+
+	srv.putter <- b
 
 	return b
 }
