@@ -16,6 +16,7 @@ import (
 	"code.google.com/p/govt/vt"
 	"code.google.com/p/govt/vt/vtsrv"
 	"github.com/crowdmob/goamz/aws"
+	"github.com/crowdmob/goamz/dynamodb"
 	"github.com/crowdmob/goamz/s3"
 	"github.com/twinj/uuid"
 )
@@ -43,6 +44,9 @@ type Chunk struct {
 var addr = flag.String("addr", ":17034", "network address")
 var debug = flag.Int("debug", 0, "print debug messages")
 var bucketName = flag.String("bucket", "daves-venti", "s3 bucket")
+var tableName = flag.String("table", "blocksToChunks", "Blocks to chunks DynamoDB table")
+
+var table *dynamodb.Table
 
 func (c *Chunk) init() {
 	// Create a DynamoDB record saying the chunk is new and not uploaded.
@@ -85,6 +89,14 @@ func (srv *Vts3) createBlockPutter() {
 				score := fmt.Sprintf("%s", b.Score)
 				srv.log("putter: storing", score, "in chunk", srv.currentChunk.Id)
 				srv.currentChunk.Blocks[score] = b
+
+				attrs := []dynamodb.Attribute{*dynamodb.NewStringAttribute("c", srv.currentChunk.Id)}
+				ok, err := table.PutItem(score, "", attrs)
+				srv.log("dynamodb insert", ok)
+				if err != nil {
+					log.Fatal(err)
+				}
+
 				// If there are more than 1000 blocks in a chunk, upload and init it
 			case <-time.After(10 * time.Second):
 				srv.log("Should rotate chunk now")
@@ -109,6 +121,26 @@ func (srv *Vts3) init() {
 
 	s := s3.New(auth, aws.USEast)
 	srv.bucket = s.Bucket(*bucketName)
+
+	td := dynamodb.TableDescriptionT{
+		TableName: *tableName,
+		AttributeDefinitions: []dynamodb.AttributeDefinitionT{
+			dynamodb.AttributeDefinitionT{"s", "S"},
+		},
+		KeySchema: []dynamodb.KeySchemaT{
+			dynamodb.KeySchemaT{"s", "HASH"},
+		},
+	}
+
+	d := &dynamodb.Server{Auth: auth, Region: aws.USEast}
+	pk, err := td.BuildPrimaryKey()
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	table = &dynamodb.Table{Server: d, Name: *tableName, Key: pk}
+
 	srv.currentChunk.init()
 	srv.createBlockPutter()
 
