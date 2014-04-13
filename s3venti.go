@@ -3,15 +3,14 @@
 package main
 
 import (
-	//"bytes"
-
+	"bytes"
 	"crypto/sha1"
-	// "encoding/gob"
+	"encoding/gob"
 	"flag"
 	"fmt"
-
 	"hash"
 	"log"
+	"os"
 	"time"
 
 	"code.google.com/p/govt/vt"
@@ -51,6 +50,26 @@ func (c *Chunk) init() {
 	c.Id = uuid.NewV4().String()
 }
 
+// stores stores a chunk to disk
+func (c *Chunk) store() {
+
+	if len(c.Blocks) == 0 {
+		return
+	}
+
+	data := new(bytes.Buffer)
+	enc := gob.NewEncoder(data)
+	enc.Encode(c)
+	filename := fmt.Sprintf("/Users/drocamor/.venti/chunks/%s", c.Id)
+	fo, err := os.Create(filename)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer fo.Close()
+
+	data.WriteTo(fo)
+}
+
 // createBlockPutter makes a goroutine that recieves blocks and stores them in chunks
 func (srv *Vts3) createBlockPutter() {
 	srv.putter = make(chan *Block)
@@ -64,9 +83,12 @@ func (srv *Vts3) createBlockPutter() {
 				// If there are more than 1000 blocks in a chunk, upload and init it
 			case <-time.After(10 * time.Second):
 				srv.log("Should rotate chunk now")
+
 				// store chunk in a file
+				srv.currentChunk.store()
 				// make file be uploaded
 				// init the currentChunk
+				srv.currentChunk.init()
 			}
 		}
 	}()
