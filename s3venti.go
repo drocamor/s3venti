@@ -4,17 +4,21 @@ package main
 
 import (
 	//"bytes"
-	"code.google.com/p/govt/vt"
-	"code.google.com/p/govt/vt/vtsrv"
+
 	"crypto/sha1"
 	// "encoding/gob"
 	"flag"
 	"fmt"
-	"github.com/crowdmob/goamz/aws"
-	"github.com/crowdmob/goamz/s3"
+
 	"hash"
 	"log"
 	"time"
+
+	"code.google.com/p/govt/vt"
+	"code.google.com/p/govt/vt/vtsrv"
+	"github.com/crowdmob/goamz/aws"
+	"github.com/crowdmob/goamz/s3"
+	"github.com/twinj/uuid"
 )
 
 type Vts3 struct {
@@ -42,8 +46,9 @@ var debug = flag.Int("debug", 0, "print debug messages")
 var bucketName = flag.String("bucket", "daves-venti", "s3 bucket")
 
 func (c *Chunk) init() {
+	// Create a DynamoDB record saying the chunk is new and not uploaded.
 	c.Blocks = make(map[string]*Block)
-	c.Id = "foo"
+	c.Id = uuid.NewV4().String()
 }
 
 // createBlockPutter makes a goroutine that recieves blocks and stores them in chunks
@@ -56,8 +61,12 @@ func (srv *Vts3) createBlockPutter() {
 				score := fmt.Sprintf("%s", b.Score)
 				srv.log("putter: storing", score, "in chunk", srv.currentChunk.Id)
 				srv.currentChunk.Blocks[score] = b
+				// If there are more than 1000 blocks in a chunk, upload and init it
 			case <-time.After(10 * time.Second):
 				srv.log("Should rotate chunk now")
+				// store chunk in a file
+				// make file be uploaded
+				// init the currentChunk
 			}
 		}
 	}()
@@ -65,6 +74,7 @@ func (srv *Vts3) createBlockPutter() {
 }
 
 func (srv *Vts3) init() {
+	uuid.SwitchFormat(uuid.Clean, false)
 	srv.schan = make(chan hash.Hash, 32)
 
 	auth, err := aws.EnvAuth()
@@ -100,10 +110,17 @@ func (srv *Vts3) calcScore(data []byte) (ret vt.Score) {
 }
 
 func (srv *Vts3) getBlock(score vt.Score) *Block {
-
+	var b *Block
 	blockPath := fmt.Sprintf("%s", score)
 
-	return srv.currentChunk.Blocks[blockPath]
+	// Check the current chunk
+	if b, ok := srv.currentChunk.Blocks[blockPath]; ok {
+		return b
+	}
+
+	// Check the block->chunk mapping
+	// Get the block
+	return b
 }
 
 func (srv *Vts3) putBlock(btype uint8, data []byte) *Block {
@@ -117,11 +134,16 @@ func (srv *Vts3) putBlock(btype uint8, data []byte) *Block {
 	// Does the block already exist?
 	blockPath := fmt.Sprintf("%s", score)
 
+	// Check the current chunk
 	if _, ok := srv.currentChunk.Blocks[blockPath]; ok {
 		srv.log("putBlock: block exists -", blockPath)
 
 		return b
 	}
+
+	// Check the block->chunk dynamodb table
+
+	// Can't find it, put the block
 
 	srv.log("putBlock: block missing -", blockPath)
 	b.Btype = btype
