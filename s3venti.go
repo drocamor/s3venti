@@ -70,6 +70,11 @@ func (c *Chunk) store() {
 	data.WriteTo(fo)
 }
 
+func (c *Chunk) rotate() {
+	c.store()
+	c.init()
+}
+
 // createBlockPutter makes a goroutine that recieves blocks and stores them in chunks
 func (srv *Vts3) createBlockPutter() {
 	srv.putter = make(chan *Block)
@@ -85,10 +90,8 @@ func (srv *Vts3) createBlockPutter() {
 				srv.log("Should rotate chunk now")
 
 				// store chunk in a file
-				srv.currentChunk.store()
+				srv.currentChunk.rotate()
 				// make file be uploaded
-				// init the currentChunk
-				srv.currentChunk.init()
 			}
 		}
 	}()
