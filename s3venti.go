@@ -10,23 +10,27 @@ import (
 	"code.google.com/p/govt/vt/vtsrv"
 	"crypto/sha1"
 	"flag"
-
-	"github.com/cznic/kv"
 	"hash"
 	"log"
 	"os"
 	"os/signal"
 	"os/user"
+
+	"github.com/crowdmob/goamz/aws"
+	"github.com/crowdmob/goamz/s3"
+	"github.com/cznic/kv"
 )
 
 type S3Venti struct {
+	bucket *s3.Bucket
+	db     *kv.DB
 	vtsrv.Srv
 	schan chan hash.Hash
-	db    *kv.DB
 }
 
 var addr = flag.String("addr", ":17034", "network address")
 var debug = flag.Int("debug", 0, "print debug messages")
+var bucketName = flag.String("bucket", "s3venti", "s3 bucket")
 
 func eqscore(s1, s2 vt.Score) bool {
 	for i := 0; i < vt.Scoresize; i++ {
@@ -40,6 +44,14 @@ func eqscore(s1, s2 vt.Score) bool {
 
 func (srv *S3Venti) init() {
 	srv.schan = make(chan hash.Hash, 32)
+
+	auth, err := aws.EnvAuth()
+	if err != nil {
+		panic(err.Error())
+	}
+
+	s := s3.New(auth, aws.USEast)
+	srv.bucket = s.Bucket(*bucketName)
 }
 
 func (srv *S3Venti) calcScore(data []byte) (ret vt.Score) {
@@ -68,10 +80,45 @@ func (srv *S3Venti) Hello(req *vtsrv.Req) {
 
 func (srv *S3Venti) Read(req *vtsrv.Req) {
 
+	// Try to get the score from the cache
 	b, err := srv.db.Get(nil, req.Tc.Score)
-
 	if err != nil {
 		req.RespondError(err.Error())
+		return
+	}
+
+	if b == nil {
+		log.Println("Score not in cache, trying S3...")
+		// Not in the cache, try S3
+		b, s3err := srv.bucket.Get(req.Tc.Score.String())
+
+		if s3err != nil {
+			// Not in S3, must not exist
+			log.Println("Score not in S3")
+			req.RespondError(err.Error())
+			return
+		}
+
+		// Put the block in the cache
+		log.Println("Score in S3, caching...")
+		cacheErr := srv.db.BeginTransaction()
+		if cacheErr != nil {
+			req.RespondError(err.Error())
+			return
+		}
+
+		cacheErr = srv.db.Set(req.Tc.Score, b)
+		if cacheErr != nil {
+			req.RespondError(err.Error())
+			return
+		}
+
+		cacheErr = srv.db.Commit()
+		if cacheErr != nil {
+			req.RespondError(err.Error())
+			return
+		}
+		req.RespondRead(b)
 		return
 	}
 
@@ -81,7 +128,41 @@ func (srv *S3Venti) Read(req *vtsrv.Req) {
 func (srv *S3Venti) Write(req *vtsrv.Req) {
 
 	s := srv.calcScore(req.Tc.Data)
-	err := srv.db.BeginTransaction()
+
+	// Is the block in the cache?
+	b, err := srv.db.Get(nil, s)
+
+	if err != nil {
+		req.RespondError(err.Error())
+		return
+	}
+
+	if b != nil {
+		// Block was in the cache, so we can be done.
+		req.RespondWrite(s)
+		return
+	}
+
+	// Block is not in cache. Is it on S3?
+	exists, err := srv.bucket.Exists(s.String())
+
+	if err != nil {
+		req.RespondError(err.Error())
+		return
+	}
+
+	if !exists {
+		// Block does not exist on S3, so store it there
+		err = srv.bucket.Put(s.String(), req.Tc.Data, "binary/octet-stream", s3.BucketOwnerFull, s3.Options{})
+		if err != nil {
+			req.RespondError(err.Error())
+			return
+		}
+	}
+
+	// Store the block in the cache
+
+	err = srv.db.BeginTransaction()
 	if err != nil {
 		req.RespondError(err.Error())
 		return
