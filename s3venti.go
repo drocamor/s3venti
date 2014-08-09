@@ -16,6 +16,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"os/user"
 )
 
 type S3Venti struct {
@@ -118,10 +119,17 @@ func main() {
 	srv := new(S3Venti)
 	srv.init()
 
-	db, err := kv.Open("venti.db", &kv.Options{})
+	usr, err := user.Current()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ventiFile := usr.HomeDir + "/.s3venti/scores.db"
+
+	db, err := kv.Open(ventiFile, &kv.Options{})
 
 	if err != nil {
-		db, err = kv.Create("venti.db", &kv.Options{})
+		db, err = kv.Create(ventiFile, &kv.Options{})
 		if err != nil {
 			log.Fatal("Cannot open or create database:", err)
 		}
