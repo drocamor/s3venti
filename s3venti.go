@@ -80,7 +80,7 @@ func (srv *S3Venti) Hello(req *vtsrv.Req) {
 
 func (srv *S3Venti) Read(req *vtsrv.Req) {
 
-	// Try to get the score from the cache
+	// Try to get the block from the cache
 	b, err := srv.db.Get(nil, req.Tc.Score)
 	if err != nil {
 		req.RespondError(err.Error())
@@ -88,36 +88,22 @@ func (srv *S3Venti) Read(req *vtsrv.Req) {
 	}
 
 	if b == nil {
-		log.Println("Score not in cache, trying S3...")
 		// Not in the cache, try S3
 		b, s3err := srv.bucket.Get(req.Tc.Score.String())
 
 		if s3err != nil {
 			// Not in S3, must not exist
-			log.Println("Score not in S3")
 			req.RespondError(err.Error())
 			return
 		}
 
 		// Put the block in the cache
-		log.Println("Score in S3, caching...")
-		cacheErr := srv.db.BeginTransaction()
-		if cacheErr != nil {
+		err = srv.cacheSet(req.Tc.Score, b)
+		if err != nil {
 			req.RespondError(err.Error())
 			return
 		}
 
-		cacheErr = srv.db.Set(req.Tc.Score, b)
-		if cacheErr != nil {
-			req.RespondError(err.Error())
-			return
-		}
-
-		cacheErr = srv.db.Commit()
-		if cacheErr != nil {
-			req.RespondError(err.Error())
-			return
-		}
 		req.RespondRead(b)
 		return
 	}
@@ -162,25 +148,32 @@ func (srv *S3Venti) Write(req *vtsrv.Req) {
 
 	// Store the block in the cache
 
-	err = srv.db.BeginTransaction()
-	if err != nil {
-		req.RespondError(err.Error())
-		return
-	}
-
-	err = srv.db.Set(s, req.Tc.Data)
-	if err != nil {
-		req.RespondError(err.Error())
-		return
-	}
-
-	err = srv.db.Commit()
+	err = srv.cacheSet(s, req.Tc.Data)
 	if err != nil {
 		req.RespondError(err.Error())
 		return
 	}
 
 	req.RespondWrite(s)
+}
+
+func (srv *S3Venti) cacheSet(key, value []byte) (err error) {
+	err = srv.db.BeginTransaction()
+	if err != nil {
+		return err
+	}
+
+	err = srv.db.Set(key, value)
+	if err != nil {
+		return err
+	}
+
+	err = srv.db.Commit()
+	if err != nil {
+		return err
+	}
+
+	return err
 }
 
 func (srv *S3Venti) cleanup() {
